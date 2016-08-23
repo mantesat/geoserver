@@ -1,12 +1,9 @@
-/* (c) 2014 - 2015 Open Source Geospatial Foundation - all rights reserved
+/* (c) 2014 - 2016 Open Source Geospatial Foundation - all rights reserved
  * (c) 2001 - 2013 OpenPlans
  * This code is licensed under the GPL 2.0 license, available at the root
  * application directory.
  */
 package org.geoserver.wms.map;
-
-import it.geosolutions.jaiext.lookup.LookupTable;
-import it.geosolutions.jaiext.lookup.LookupTableFactory;
 
 import java.awt.Color;
 import java.awt.Graphics2D;
@@ -74,6 +71,7 @@ import org.geotools.geometry.jts.ReferencedEnvelope;
 import org.geotools.image.ImageWorker;
 import org.geotools.map.Layer;
 import org.geotools.map.StyleLayer;
+import org.geotools.parameter.DefaultParameterDescriptor;
 import org.geotools.parameter.Parameter;
 import org.geotools.referencing.CRS;
 import org.geotools.referencing.CRS.AxisOrder;
@@ -84,7 +82,9 @@ import org.geotools.renderer.lite.RenderingTransformationHelper;
 import org.geotools.renderer.lite.StreamingRenderer;
 import org.geotools.renderer.lite.gridcoverage2d.GridCoverageRenderer;
 import org.geotools.resources.image.ColorUtilities;
+import org.geotools.styling.ChannelSelection;
 import org.geotools.styling.RasterSymbolizer;
+import org.geotools.styling.SelectedChannelType;
 import org.geotools.styling.Style;
 import org.geotools.util.logging.Logging;
 import org.opengis.feature.Feature;
@@ -95,6 +95,9 @@ import org.opengis.parameter.GeneralParameterValue;
 import org.opengis.referencing.FactoryException;
 import org.opengis.referencing.crs.CoordinateReferenceSystem;
 import org.opengis.referencing.datum.PixelInCell;
+
+import it.geosolutions.jaiext.lookup.LookupTable;
+import it.geosolutions.jaiext.lookup.LookupTableFactory;
 
 
 /**
@@ -919,6 +922,35 @@ public class RenderedImageMapOutputFormat extends AbstractMapOutputFormat {
             tileSizeY = mapContent.getMapHeight();
         }
         
+        // 
+        // Band selection
+        //
+        //
+        
+        int[] bandIndicesTmp = null;
+        ChannelSelection channelSelection = symbolizer.getChannelSelection();
+        if (channelSelection!=null){
+            SelectedChannelType[] channels = channelSelection.getSelectedChannels();
+            bandIndicesTmp = new int[channels.length];
+            for (int i=0;i<channels.length;i++){
+                bandIndicesTmp[i]= Integer.parseInt(channels[i].getChannelName());
+            }
+        }
+        
+        final int[] bandIndices = bandIndicesTmp;
+        
+        // if bands are selected, alter the symbolizer to use bands in order 0,1,2,... since the 
+        // channel order defined by it previously is taken care of the reader 
+        if (bandIndices!=null){
+            ChannelSelection selection = symbolizer.getChannelSelection();
+            SelectedChannelType[] channels = selection.getSelectedChannels();
+            int i=0;
+            for (SelectedChannelType channel:channels){
+                channel.setChannelName(Integer.toString(i));
+                i++;
+            }
+        }       
+        
         // actual read
         RenderedImage image = null;
         GridCoverage2D coverage=null; 
@@ -938,7 +970,8 @@ public class RenderedImageMapOutputFormat extends AbstractMapOutputFormat {
                 // handling
                 final Object params = feature.getProperty("params").getValue();
                 GeneralParameterValue[] readParameters = getReadParameters(params, null, null,
-                        interpolation, readerBgColor);
+                        interpolation, readerBgColor, bandIndices);
+                          
                 final GridCoverageRenderer gcr = new GridCoverageRenderer(mapEnvelope.getCoordinateReferenceSystem(), mapEnvelope,
                         mapRasterArea, worldToScreen, interpolationHints);
                 gcr.setAdvancedProjectionHandlingEnabled(true);
@@ -1000,7 +1033,7 @@ public class RenderedImageMapOutputFormat extends AbstractMapOutputFormat {
                                 Object params, GridGeometry2D readGG) throws IOException {
                             return readBestCoverage(reader, params,
                                     ReferencedEnvelope.reference(readGG.getEnvelope()),
-                                    readGG.getGridRange2D(), interpolation, readerBgColor);
+                                    readGG.getGridRange2D(), interpolation, readerBgColor, bandIndices);
                         }
 
                     };
@@ -1029,7 +1062,7 @@ public class RenderedImageMapOutputFormat extends AbstractMapOutputFormat {
 
                     coverage = readBestCoverage(reader, params,
                             ReferencedEnvelope.reference(readGG.getEnvelope()),
-                            readGG.getGridRange2D(), interpolation, readerBgColor);
+                            readGG.getGridRange2D(), interpolation, readerBgColor, bandIndices);
                 }
                 // Nothing found, we return a constant image with background value
                 if (coverage == null) {
@@ -1372,7 +1405,8 @@ public class RenderedImageMapOutputFormat extends AbstractMapOutputFormat {
             final ReferencedEnvelope envelope,
             final Rectangle requestedRasterArea,
             final Interpolation interpolation,
-            final Color bgColor) throws IOException {
+            final Color bgColor,
+            final int[] bandIndices) throws IOException {
 
         ////
         //
@@ -1403,7 +1437,7 @@ public class RenderedImageMapOutputFormat extends AbstractMapOutputFormat {
 
         GridCoverage2D coverage;
         GeneralParameterValue[] readParams = getReadParameters(params, envelope,
-                requestedRasterArea, interpolation, bgColor);
+                requestedRasterArea, interpolation, bgColor, bandIndices);
 
         coverage = reader.read(readParams);
 
@@ -1412,7 +1446,7 @@ public class RenderedImageMapOutputFormat extends AbstractMapOutputFormat {
 
     private static GeneralParameterValue[] getReadParameters(final Object params,
             final ReferencedEnvelope envelope, final Rectangle requestedRasterArea,
-            final Interpolation interpolation, final Color bgColor) {
+            final Interpolation interpolation, final Color bgColor, final int[] bandIndices) {
         Parameter<GridGeometry2D> readGG = null;
         if (envelope != null) {
             // //
@@ -1434,6 +1468,15 @@ public class RenderedImageMapOutputFormat extends AbstractMapOutputFormat {
             bgColorParam.setValue(bgColor);
         } else {
             bgColorParam = null;
+        }
+        
+        //Inject bandIndices read param
+        Parameter<int[]> bandIndicesParam = null;
+        if (bandIndices != null) {
+            final DefaultParameterDescriptor<int[]> BANDS = new DefaultParameterDescriptor<int[]>(
+                    "Bands", int[].class, null, null);
+            bandIndicesParam = (Parameter<int[]>) BANDS.createValue();
+            bandIndicesParam.setValue(bandIndices);
         }
         
         
