@@ -5,6 +5,9 @@
  */
 package org.geoserver.wms.map;
 
+import it.geosolutions.jaiext.lookup.LookupTable;
+import it.geosolutions.jaiext.lookup.LookupTableFactory;
+
 import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.Point;
@@ -71,7 +74,6 @@ import org.geotools.geometry.jts.ReferencedEnvelope;
 import org.geotools.image.ImageWorker;
 import org.geotools.map.Layer;
 import org.geotools.map.StyleLayer;
-import org.geotools.parameter.DefaultParameterDescriptor;
 import org.geotools.parameter.Parameter;
 import org.geotools.referencing.CRS;
 import org.geotools.referencing.CRS.AxisOrder;
@@ -95,9 +97,6 @@ import org.opengis.parameter.GeneralParameterValue;
 import org.opengis.referencing.FactoryException;
 import org.opengis.referencing.crs.CoordinateReferenceSystem;
 import org.opengis.referencing.datum.PixelInCell;
-
-import it.geosolutions.jaiext.lookup.LookupTable;
-import it.geosolutions.jaiext.lookup.LookupTableFactory;
 
 
 /**
@@ -844,7 +843,7 @@ public class RenderedImageMapOutputFormat extends AbstractMapOutputFormat {
     private RenderedImage directRasterRender(WMSMapContent mapContent, int layerIndex,
             List<GridCoverage2D> renderedCoverages, Interpolation layerInterpolation) throws IOException, FactoryException {
         
-        //
+    	//
         // extract the raster symbolizers and the eventual rendering transformation
         //
         double scaleDenominator = mapContent.getScaleDenominator(true);
@@ -931,9 +930,12 @@ public class RenderedImageMapOutputFormat extends AbstractMapOutputFormat {
         ChannelSelection channelSelection = symbolizer.getChannelSelection();
         if (channelSelection!=null){
             SelectedChannelType[] channels = channelSelection.getSelectedChannels();
-            bandIndicesTmp = new int[channels.length];
-            for (int i=0;i<channels.length;i++){
-                bandIndicesTmp[i]= Integer.parseInt(channels[i].getChannelName());
+            if (channels!=null){
+	            bandIndicesTmp = new int[channels.length];
+	            for (int i=0;i<channels.length;i++){
+	                //Note that in channel selection, channels start at index 1
+	                bandIndicesTmp[i]= Integer.parseInt(channels[i].getChannelName())-1;
+	            }
             }
         }
         
@@ -944,10 +946,13 @@ public class RenderedImageMapOutputFormat extends AbstractMapOutputFormat {
         if (bandIndices!=null){
             ChannelSelection selection = symbolizer.getChannelSelection();
             SelectedChannelType[] channels = selection.getSelectedChannels();
-            int i=0;
-            for (SelectedChannelType channel:channels){
-                channel.setChannelName(Integer.toString(i));
-                i++;
+            if (channels!=null){
+	            int i=0;
+	            for (SelectedChannelType channel:channels){
+	                //Remember, channel indices start from 1
+	                channel.setChannelName(Integer.toString(i+1));
+	                i++;
+	            }
             }
         }       
         
@@ -1473,12 +1478,9 @@ public class RenderedImageMapOutputFormat extends AbstractMapOutputFormat {
         //Inject bandIndices read param
         Parameter<int[]> bandIndicesParam = null;
         if (bandIndices != null) {
-            final DefaultParameterDescriptor<int[]> BANDS = new DefaultParameterDescriptor<int[]>(
-                    "Bands", int[].class, null, null);
-            bandIndicesParam = (Parameter<int[]>) BANDS.createValue();
+            bandIndicesParam = (Parameter<int[]>) AbstractGridFormat.BANDS.createValue();
             bandIndicesParam.setValue(bandIndices);
         }
-        
         
         // then I try to get read parameters associated with this
         // coverage if there are any.
@@ -1500,10 +1502,12 @@ public class RenderedImageMapOutputFormat extends AbstractMapOutputFormat {
             final String readGGName = AbstractGridFormat.READ_GRIDGEOMETRY2D.getName().toString();
             final String readInterpolationName = ImageMosaicFormat.INTERPOLATION.getName().toString();
             final String bgColorName = AbstractGridFormat.BACKGROUND_COLOR.getName().toString();
+            final String bandsListName = AbstractGridFormat.BANDS.getName().toString();
             int i = 0;
             boolean foundInterpolation = false;
             boolean foundGG = false;
             boolean foundBgColor = false;
+            boolean foundBandIndices = false;
             for (; i < length; i++) {
                 final String paramName = readParams[i].getDescriptor().getName().toString();
                 if (paramName.equalsIgnoreCase(readGGName) && readGG != null) {
@@ -1516,10 +1520,14 @@ public class RenderedImageMapOutputFormat extends AbstractMapOutputFormat {
                     ((Parameter) readParams[i]).setValue(bgColor);
                     foundBgColor = true;
                 }
+                else if(paramName.equalsIgnoreCase(bandsListName) && bandIndices != null) {
+                    ((Parameter) readParams[i]).setValue(bandIndices);
+                    foundBandIndices = true;
+                }
             }
             
             // did we find anything?
-            if (!foundGG || !foundInterpolation || !(foundBgColor && bgColor != null)) {
+            if (!foundGG || !foundInterpolation || !(foundBgColor && bgColor != null) || !foundBandIndices) {
                 // add the correct read geometry to the supplied
                 // params since we did not find anything
                 List<GeneralParameterValue> paramList = new ArrayList<GeneralParameterValue>();
@@ -1533,6 +1541,9 @@ public class RenderedImageMapOutputFormat extends AbstractMapOutputFormat {
                 if(!foundBgColor && bgColor != null) {
                     paramList.add(bgColorParam);
                 }
+                if(!foundBandIndices && bandIndices != null) {
+                    paramList.add(bandIndicesParam);
+                }
                 readParams = paramList.toArray(new GeneralParameterValue[paramList
                         .size()]);
             }
@@ -1544,9 +1555,13 @@ public class RenderedImageMapOutputFormat extends AbstractMapOutputFormat {
             if (bgColor != null) {
                 paramList.add(bgColorParam);
             }
+            if (bandIndices != null) {
+                paramList.add(bandIndicesParam);
+            }
             paramList.add(readInterpolation);
             readParams = paramList.toArray(new GeneralParameterValue[paramList.size()]);
         }
+        
         return readParams;
     }
 }

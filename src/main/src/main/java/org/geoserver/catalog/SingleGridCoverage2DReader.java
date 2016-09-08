@@ -1,4 +1,4 @@
-/* (c) 2014-2015 Open Source Geospatial Foundation - all rights reserved
+/* (c) 2014 - 2016 Open Source Geospatial Foundation - all rights reserved
  * (c) 2001 - 2013 OpenPlans
  * This code is licensed under the GPL 2.0 license, available at the root
  * application directory.
@@ -62,7 +62,7 @@ public class SingleGridCoverage2DReader implements GridCoverage2DReader {
      */
     protected void checkCoverageName(String coverageName) {
         if (!this.coverageName.equals(coverageName)) {
-            throw new IllegalArgumentException("Unkonwn coverage named " + coverageName
+            throw new IllegalArgumentException("Unknown coverage named " + coverageName
                     + ", the only valid value is: " + this.coverageName);
         }
     }
